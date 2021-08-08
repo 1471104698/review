@@ -316,8 +316,8 @@ TCP 在最开始建立好连接后，不会立马发送大数据，而是会一�
 快恢复：
 
 ```java
-1、将慢启动阈值 ssthresh 设置为 cwnd（拥塞窗口）的一半，即 ssthresh = cwnd / 2，然后将 cwnd 设置为 ssthresh + 3，即 cwnd = cwnd / 2 + 3 = ssthresh + 3
-2、快重传丢失的报文后再次收到重复的 ACK，那么 cwnd + 1
+1、将慢启动阈值 ssthresh 设置为 ssthresh = cwnd / 2,（cwnd 拥塞窗口的一半），然后将拥塞窗口  cwnd 设置为 ssthresh + 3（cwnd 减半）
+2、（快）重传丢失的报文，如果收到重复的 ACK， cwnd + 1
 3、如果收到新的数据包的 ACK，表示接收方已经收到了丢失的数据包，那么将 cwnd 设置为前面的 ssthresh，重新开始拥塞避免算法
 
 1 中为什么最开始 cwnd = ssthresh + 3 中要 + 3？
