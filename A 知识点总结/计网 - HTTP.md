@@ -198,3 +198,69 @@ SSL 四次握手过程：
 ```
 
 
+
+## 4、HTTP 1.1 分块传输 Chunk
+
+对于客户端请求静态文件，服务端只需要在响应头指定 `Content-Length` 即可告知客户端需要接收的数据量大小
+
+但是对于动态生成的文件，比如文件边生成边传输，生成的文件到底多大服务端也并不知道，因此服务端并不能在发送前就事先告知客户端的大小，那么 Content-Length 就不起作用，因此出现了分块传输机制 Chunk，使用 `Transfer-Encoding: chunked` 来代替 `Content-Length`
+
+文件传输分成一个个的 chunk 块，chunk 编码格式如下：
+
+```
+[chunk size][\r\n][chunk data][\r\n][chunk size][\r\n][chunk data][\r\n][chunk size = 0][\r\n][\r\n]
+```
+
+chunk size 表示后续数据块的大小，chunk data 表示数据，当数据传输完成时，以 0 作为结尾，即 chunk size = 0
+
+这里 chunk size 以十六进制表示
+
+
+
+chunk 编码响应例子：
+
+```http
+HTTP/1.1 200 OK
+Content-Type: text/plain
+Transfer-Encoding: chunked
+
+25
+This is the data in the first chunk
+
+1C
+and this is the second one
+
+3
+con
+
+8
+sequence
+
+0
+
+
+```
+
+25 是十六进制，转变成十进制为 37，而 `This is the data in the first chunk` 占了 35byte，那么最后存在 \r\n 两个字节表示换行
+
+3 是十六进制，转变成十进制为 3，`con` 占 3 字节，所以不需要换行
+
+0 表示传输结束，后面存在两个 \r\n
+
+转变成字符串存储的话就是：
+
+```
+"This is the data in the first chunk\r\n"
+"and this is the second one\r\n"
+"con"
+"sequence"
+```
+
+解码数据为：
+
+```
+This is the data in the first chunk
+and this is the second one
+consequence
+```
+
