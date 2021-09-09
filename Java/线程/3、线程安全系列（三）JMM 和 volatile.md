@@ -30,7 +30,9 @@ JMM 规定了 内存只要有两种：主存 和 工作内存
 
 
 
-volatile 只能保证可见性，不能保证原子性，因为 **volatile 不能禁止多个 CPU 核心同时持有 volatile 变量**
+volatile 底层是借助 **总线嗅探 + CPU 缓存一致性 MESI + Store Buffers + 无效队列 + 内存屏障** 来实现 **写传播和事务串行化** 来解决数据可见性问题的
+
+volatile 能够保证**可见性和指令的有序性**，不能保证原子性，因为 **volatile 不能禁止多个 CPU 核心同时持有 volatile 变量**
 
 ```java
 volatile 保证可见性是通过 happens-before 规则实现

@@ -24,43 +24,12 @@
 
 3、ThreadPoolExecute 内部制定的四大拒绝策略
 ①、抛异常
-②、直接丢弃，什么都不做
-③、如果线程池还没有关闭，那么将任务队头头部的任务丢弃，将该任务使用 execute() 提交
-④、如果线程池还没有关闭，那么由提交任务的线程处理该任务
+②、直接丢弃
+③、将任务队列头部的任务丢弃，再将任务入队（可以理解为等的最久的，执行过程中最可能超时的任务）
+④、由提交任务的线程处理
 	（这个策略的好处在于，一是新提交的任务不会被丢弃，二是由于提交任务的线程来执行任务，
         而任务的执行通常需要较长的时间，这样就不会有新的任务提交，给线程池一个缓冲区，
         当然，有利有弊，弊就是不能再去处理其他请求。）
-    
-    public static class DiscardPolicy implements RejectedExecutionHandler {
-        public void rejectedExecution(Runnable r, ThreadPoolExecutor e) {
-            //什么都不做，相当于直接舍弃掉任务
-        }
-    }
-	public static class AbortPolicy implements RejectedExecutionHandler {
-        public void rejectedExecution(Runnable r, ThreadPoolExecutor e) {
-            //抛异常
-            throw new RejectedExecutionException("Task " + r.toString() +
-                                                 " rejected from " +
-                                                 e.toString());
-        }
-    }
-    public static class DiscardOldestPolicy implements RejectedExecutionHandler {
-        public void rejectedExecution(Runnable r, ThreadPoolExecutor e) {
-            //如果线程池没有关闭，那么将任务队列队头的任务舍弃，然后将任务提交上去
-            if (!e.isShutdown()) {
-                e.getQueue().poll();
-                e.execute(r);
-            }
-        }
-    }
-	public static class CallerRunsPolicy implements RejectedExecutionHandler {
-        public void rejectedExecution(Runnable r, ThreadPoolExecutor e) {
-            //如果线程池没有关闭，那么由当前提交任务的线程执行任务
-            if (!e.isShutdown()) {
-                r.run();
-            }
-        }
-    }
 
 4、线程池任务提交过程：
 1）判断线程池是否在 RUNNING 状态
@@ -188,7 +157,7 @@ HashMap 由于不是线程安全的，所以 key 可以存储一个 null 值，�
 
 ```
 1、数据结构
-JDK 7：使用分段锁 volatile + Segment + 链表，Segment 继承了 ReentrantLock，但存在线程写操作时，那么调用 lock() 加锁，因此如果 table 长度为 16，每个 Segment 管理 4 个槽位，那么最多可以支持 4 个线程并发修改
+JDK 7：使用分段锁 volatile + Segment + 链表，Segment 继承了 ReentrantLock，存在线程写操作时，那么调用 lock() 加锁，比如 table 长度为 16，每个 Segment 管理 4 个槽位，那么最多可以支持 4 个线程并发修改
 JDK 8：使用 volatile + sync 锁 + CAS + 链表 + 红黑树，锁的粒度减小，每次只锁一个槽位，因此最多可以支持 table.length 个线程并发修改
 
 JDK 7 和 JDK 8 都存在 3 处 volatile：

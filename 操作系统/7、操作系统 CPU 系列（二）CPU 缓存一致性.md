@@ -14,8 +14,6 @@
 
 ​	L1 cache 包含 dCache（数据缓存）和 iCache（指令缓存）
 
-（如果是单核的，那么相当于一个 CPU 一个 L1 cache、一个 L2 cache、一个 L3 cache）
-
 L1 cache 与 CPU 核心 直接交互，读写效率最高，同时内部容量也是最小的
 
 <img src="https://mmbiz.qpic.cn/mmbiz_png/J0g14CUwaZf0RnQxwibdcyFOTw0NvInPPKJan1icpeMMyiawV2UvVwcCayaDLWJ00D3rh78LYZqBwOv9tSTYCvRog/640?wx_fmt=png&tp=webp&wxfrom=5&wx_lazy=1&wx_co=1" style="zoom:60%;" />
@@ -38,7 +36,7 @@ CPU 修改完数据将数据写回内存的方式有两种：直写 和 回写
 
 
 
-> #### 写回
+> #### 写回（目前 CPU 使用的方式）
 
 每个 cache line 都存在 1bit 来记录该 cache line 是否被修改过，如果没有被修改过，是干净的，那么为 0，如果被修改过，那么就是脏的，置为 1。	这个 1bit 称作 dirty bit
 
@@ -115,35 +113,29 @@ CPU D 先收到 i = 200 的修改消息，再收到 i = 100 的修改消息，�
 
 ## 4、总线嗅探（写传播实现）
 
-为了解决 CPU B 无法读取到 CPU A 的后面就引用了一种机制，叫做总线嗅探
+为了解决 CPU A 修改后的数据不能被其他的 CPU 核心读取到的问题，引入了一种通知机制：总线嗅探
+
+总线是用来传播消息的，所有的 CPU 都会去监听总线上的事件，当 CPU A 修改了变量 i 时，那么它会将修改的这个消息发布到总线上，其他 CPU 收到消息后会修改自己 CPU cache 上变量 i
 
 
 
-总线：总线不是一条线，英文名为 bus，意为公交车， 总线就是公共汽车线路，连接的设备就是公交站。传输的数据包就是乘客。每个乘客都要知道自己从哪站上，到哪站下，然后等到站的时候就下去进入另一个设备进行处理。公交车需要个调度室，所以总线需要有个控制器。 
+总线风暴：
+
+```
+所有的 CPU 核心都会去监听总线上的数据，并且 CPU 所有的数据修改都会去发布一条消息，可能这次修改的数据只存在于修改的 CPU 上，其他 CPU 核心并没有存储该数据，那么这条消息就成了无效消息，这种情况频繁发生会加重总线的负担
+```
 
 
 
-总线嗅探的工作机制：
-
-- CPU A 修改了 i，通过总线将这个修改事件 和 修改的变量和值 广播出去，通知其他所有 CPU 核心
-- 每个 CPU 核心都会监听总线上的广播事件，并且检查目标变量是否存在于自己的 cache 内
-- 如果 CPU B 的 cache 中存在该变量，那么 CPU B 会认为重新从主存中读取
+总线嗅探仅仅是实现了写传播，它并没有实现事务的串行化，所以还是可能导致数据的不一致性
 
 
 
-总线嗅探机制 有一个很明显的问题，所有 CPU 核心都需要无时无刻的监听总线上的广播事件，而所有 CPU 核心只要修改过数据，都会发送一个广播事件，这样的话，就会导致 CPU 资源的浪费，因为 如果 CPU 核心修改的数据只有自己独占，而别的 CPU 核心并没有 cache 的话，那么这次广播事件显然是一次无意义的事件，浪费 CPU 资源 并且 加重了总线的负载
-
-同时还有一个问题，**总线嗅探并不能保证事务的串行化，它仅仅只是实现了写传播而已**
+因此，引入了 **基于总线嗅探机制，同时能够解决写传播和事务串行化的 CPU 缓存一致性协议 MESI**
 
 
 
-因此，出现了一个 **基于总线嗅探机制，用于解决事务串行化的 CPU 缓存一致性协议 MESI**
-
-
-
-## 5、CPU 缓存一致性协议 MESI（事务串行化实现）
-
-
+## 5、CPU 缓存一致性协议 MESI（写传播和事务串行化实现）
 
 MESI 分别代表 缓存行 的 4 种状态，可以使用 2bit 来表示
 
@@ -162,29 +154,17 @@ MESI 分别代表 缓存行 的 4 种状态，可以使用 2bit 来表示
 
 
 
- 「独占」和「共享」 差别在于 由于独占状态时只有 CPU A 存在 i 变量，所以当 CPU A 修改这个变量时，**不需要发布广播事件，直接修改即可，也不需要设置为  「已修改」状态**
+ 「独占」和「共享」 差别在于 由于独占状态时只有 CPU A 存在 i 变量，所以当 CPU A 修改这个变量时，**不需要发布广播事件**
 
-CPU A 独占 变量 i 所在的缓存行，当 CPU B 在**读取 i 变量前**，会将这个事件发布到总线上，总线进行广播， CPU A 发现自己持有这个变量，并且是  「独占」状态，此时 CPU A 中的 i 有两种情况：CPU A 修改过了 和 CPU A 没有修改过
-
-CPU A 会将 cache 中的数据写回到内存中，CPU B 从主存中读取最新值，然后 CPU A 和 CPU B 该缓存行数据都设置为 「共享」
-
-当 CPU A 修改处于 「共享」的 cache line 时，需要发布事件让 总线广播出去通知其他持有该 cache line 的 CPU 核心，这里会让 CPU B 将该 cache line 设置为「已失效」，等到 CPU A 修改完后，会将 cache line 设置为  「已修改」,同时会修改缓存行的 dirty bit = 1，表示该 cache line 中跟 内存数据不一致，是脏数据
-
-当 CPU A 再次修改 i 的值时，由于该 cache line 已经设置为 「已修改」了，所以表示之前已经让其他 CPU 核心的 cache line 无效了，所以不需要再发布消息了，直接修改即可
-
-当 CPU B 要读取 i 变量时，发现缓存行的状态为  「已失效」，因此会到主存中读取，此时会将这个事件发布到总线上，CPU A 监听到后将 cache 数据写回到主存，然后 CPU B 读取到后，两者再设置为 「共享」
-
-当 CPU A 要替换掉某个 cache line 的数据时，需要先判断该缓存行的状态，如果 处于 「已修改」，需要先将 该 cache line 写回内存
-
- 即当 CPU A 的缓存行处于 独占、已修改 状态时，CPU B 要去内存中读取这个缓存行的数据，那么 CPU A 会将该缓存行写回到内存中，然后 CPU B 再读取，然后两者都将缓存行的状态设置为 「共享」
+1. CPU A 变量 i 独占 E，修改的时候直接将数据刷新到 cache，不需要发布消息，修改状态为 【已修改】
+2. CPU A 变量 i 共享 S，修改的时候发布 cache 无效消息，**无效消息上包含数据的物理内存地址**，让其他 CPU 核心持有该内存地址的 cache line 修改为无效，再把数据刷新到 cache，把 cache line 设置为 【已修改】
+3. CPU A 变量 i 已修改 M，再次修改时不需要设置修改
+4. CPU A 读取 cache 无效或者不存在的数据，那么总线发布 read 消息，其他 CPU 没有该数据，从主存中读取，cache line 设置为 【独占】E，其他 CPU 有数据，持有该数据的 CPU 核心会将自己的 cache line 返回给 CPU A，同时都 cache line 都设置为共享 S
+5. CPU A 持有 已修改 M cache line，其他 CPU 核心读取时，CPU 核心 A 将 cache line 返回给其他 CPU 核心，再将 cache 数据刷新回主存，然后都设置为 【共享】状态；其他 CPU 核心写时，CPU 核心 A 将 cache line 返回给其他 CPU 核心，再将 cache 刷新回主存，然后设置为 【无效】状态
 
 
 
-这里我们可以看出，在使用了 MESI 协议后，**「已修改」和  「独占」两种状态下的修改不会去总线发布广播事件，避免了 CPU 资源的浪费 和 减少了总线的负载**
-
-
-
-
+在使用了 MESI 协议后，**「已修改」和  「独占」两种状态下的修改不会去总线发布广播事件，避免了 CPU 资源的浪费 和 减少了总线的负载**
 
 | 状态                     | 描述                                                         | 监听任务                                                     |
 | :----------------------- | :----------------------------------------------------------- | :----------------------------------------------------------- |
@@ -209,33 +189,33 @@ CPU A 会将 cache 中的数据写回到内存中，CPU B 从主存中读取最�
 - CPU B 和 CPU C 都监听到无效消息，将 cache line 标记为无效，然后给 CPU A 返回 ACK 反馈，表示处理完毕
 - CPU A 收到 其他 CPU 的 ACK 反馈，停止等待，将数据写入到 cache 中
 
-很显然，问题很大，当 CPU A 持有相当一部分 cache line 都处于 「共享」时，那么修改写回缓存后需要 频繁进入等待状态，这显然对于高效的 CPU 来说是不能接受的
+很显然，问题很大，当 CPU A 持有相当一部分 cache line 都处于 「共享」时，那么修改写回缓存后需要 频繁进入等待，等待的时间比执行指令的时间要长的多，这显然降低了 CPU 的效率
 
-因此出现了 Store Buffers，它在 CPU 和 cache 之间又加了一层小小的 cache，CPU 修改数据时，不会直接写回 cache，而是会写入到 Store Buffers 中，这样就不会向总线发布失效消息，这样 CPU 就可以继续去做别的事情
-
-
-
-### 6.2、Store Forwarding
-
-加入 Store Buffers 后，带来了一个新的问题，CPU 从 cache 中读取数据，而有的数据在 Store Buffers 中没有写入 cache，即前面写入的逻辑对于后面的操作来说不可见，造成了数据可见性问题
+解决问题的思路是将数据刷回 cache line 的处理由同步转换为异步，因此出现了 Store Buffers，它在 CPU 和 cache 之间又加了一层小小的 cache，CPU 修改数据时，不会直接写回 cache，而是会写入到 Store Buffers 中，然后等待收到其他 CPU 核心的 ACK 后再将 Store Buffers 中的数据刷新回 cache
 
 
 
-解决方法是 加入 Store Forwarding
+问题：为什么 CPU 需要等待收到所有的 ACK 后才将数据刷新回 cache，而不是直接刷新 cache？
 
-每次 CPU 读取数据的时候，如果 Store Buffers 中有数据，那么从 Store Buffers 中尝试读取，没有的话再读取 cache
+```
 
-这样的话就保证了 单核 CPU 的数据可见性
-
-
-
-### 6.3、内存屏障（Memory Barriers）
-
-Store Buffers 的引入会存在 数据可见性问题，后续再引入 Store Forwarding 解决了单核 CPU 的数据可见性问题
-
-但是它并不能解决多核 CPU 的可见性问题，因为 CPU A 写入 Store Buffers 中的数据通过 Store Forwarding 后 CPU A 自己可见，但是它没有写入  cache 中，没有发布失效消息，这样别的 CPU 核心就不知道该数据失效了，这样 CPU A 前面执行的写逻辑 对于 其他 CPU 核心来说是不可见的
+```
 
 
+
+对于当前 CPU 来讲，读取数据的逻辑就变成：
+
+1. 先读取 Store Buffers
+2. 再读取 CPU cache
+3. 再读取主存
+
+
+
+Store Buffers 在多 CPU 核心间的数据可见性问题：
+
+```
+Store Buffers 是 CPU 核心私有的，对于 CPU A 来说，它不存在数据可见性问题，因为它总能够读取到最新值，但是对其他 CPU 核心来说，它发布消息后 CPU A 返回的数据是 cache line 中的数据，而不是 Store Buffers 中的数据，这也就导致了其他 CPU 核心读取到的是 CPU A cache line 中的旧数据，而不是 Store Buffers 中的新数据，从而导致数据可见性问题
+```
 
 例子：
 
@@ -257,13 +237,21 @@ void bar(void)
 
 CPU A 访问 foo()，CPU B 访问 bar()，假设 a 被 CPU A 和 CPU B 共享，b 被 CPU A 独占
 
-- CPU A 修改了 a，将 a 存储进 Store Buffers 中，没有刷入 cache
+- CPU A 修改了 a，将 a = 1 存储进 Store Buffers 中，发布无效消息
+- CPU B 收到无效消息，将 a cache line 修改为 【无效】状态
+- CPU A 修改了 b，由于 b 是独占，所以直接修改 cache，再修改 【已修改】状态，不需要发布消息
+- CPU B 读取 b，由于 b 不存在，所以发布 read b 消息，CPU A 返回 b = 1 的 cache line
+- CPU B  发现 b != 0，退出循环，发现 a cache line 无效，发送 read a 消息
+- CPU A 收到后返回 a = 0 的 cache line，CPU B 收到后，发现 a == 0，断言失败
+- CPU A 后续再将 Store Buffers 中 a = 1 的数据写回到 cache 也已经晚了
 
-- CPU A 修改了 b，将 b 写入到 cache 中，发布失效消息
-- CPU B 监听到失效消息，将 b 失效，然后重新访问，同步到 CPU A 的新的 b = 1，退出循环
-- CPU B  cache 中 a = 0，所以  assert failed
+出现上述原因是 Store Buffers 中的新值只能  CPU A 看得到，其他 CPU 核心获取到的是 cache line 的旧值
 
-为了解决这种情况，因此出现了 内存屏障 
+因此出现了内存屏障
+
+
+
+### 6.3、内存屏障（Memory Barriers）
 
 ```C++
 int a = 0;
@@ -284,15 +272,17 @@ void bar(void)
 
 在 a 和 b 之间添加 内存屏障 smp_mb()，它的语义是：在执行 内存屏障的下一条指令之前，需要先将 Store Buffers 中的数据写回到 cache
 
+这样在 b = 1 执行前会将 Store Buffers 中 a = 1 的值刷回 cache，这样其他 CPU 核心读取的 a cache line 就是新值了
+
 
 
 
 
 ### 6.4、无效队列（Invalidate Queues）
 
-引入 Store Buffers 后并不能解决 MESI 全部的问题，当在写操作前添加内存屏障后，会将 Store Buffers 中的数据都写回 cache，那么表示会发布多条失效消息，这样 CPU A 还是需要等待其他 CPU 核心处理完 失效 cache line 然后接收它们返回的 ACK
+引入 Store Buffers 实际上还是存在一个问题：Store Buffers 是最接近 CPU 核心的，它的容量大小并不大，在引入内存屏障后基本所有的写操作都会堆积到 Store Buffers  中，这样在 Store Buffers  满了后，还是需要等待 ACK，回到了原来的问题
 
-因此，为了解决这个问题，引入了 Invalidate Queues，每个 CPU 核心都维护一个 Invalidate Queues，用来接收 无效消息
+解决这个问题的思路就是将 ACK 的处理由同步转变为异步，因此引入了 Invalidate Queues，每个 CPU 核心都维护一个 Invalidate Queues，用来接收无效消息
 
 当 CPU A 发布无效消息后，CPU B 收到后不会立马去执行，而是将无效消息放入到 Invalidate Queues 中，然后立马返回一个 ACK，这样 CPU A 就大大缩短了等待的时间，而 CPU B 的 Invalidate Queues 内的无效消息会在后续进行处理
 
@@ -317,13 +307,15 @@ void bar(void)
 }
 ```
 
-a 是 CPU A 和 CPU B 共享，b 是 CPU A 独占
+CPU A 访问 foo()，CPU B 访问 bar()，假设 a 被 CPU A 和 CPU B 共享，b 被 CPU A 独占
 
-- CPU A 修改 a 的值，将修改数据放入到 Store Buffers
+- CPU A 修改 a 的值，将修改数据放入到 Store Buffers，发布 a 无效消息，修改为 【已修改】状态
+- CPU B 执行 while (b == 0)，发现 cache 没有 b，发布 read b 消息
 - CPU A 执行内存屏障，将 Store Buffers 中的数据刷新回 cache，发布失效消息
-- CPU B 监听到失效消息，将失效消息放到 Invalidate Queues，返回一个 ACK
-- CPU A 修改 b 的值，刷新回 cache
-- CPU B 获取 b 的值退出循环，但是由于没有执行失效消息， cache 中 a = 0 并没有失效，导致 assert failed
+- CPU B 监听到失效消息，将失效消息放到 Invalidate Queues，返回一个 ACK，此时 CPU B 没有将 a cache line 设置为无效
+- CPU A 修改 b 的值，发现是独占的，标记为 【已修改】，再刷新回 cache
+- CPU A 收到 read b 消息，将 b cache line 返回给 CPU B
+- CPU B 获取 b 的值退出循环，但是由于没有执行失效消息， cache 中 a = 0 并没有失效，导致执行读取的 cache 中 a = 0 的旧值，导致断言失败
 
 解决方法是在读操作前面添加一个 内存屏障
 
@@ -349,50 +341,10 @@ void bar(void)
 
 
 
-### 6.5、读内存屏障 和 写内存屏障
+### 6.5、总结
 
-可以发现，smp_mb() 这个内存屏障很重，具有两个操作：在执行下一条指令前，将 Store Buffers 中的数据刷新回 cache 和 将 Invalidate Queues 中的失效消息全部处理
+在硬件层面上， 默认实现了 总线嗅探 + CPU 缓存一致性协议 MESI，在软件层面上实现了内存屏障
 
-但是有时候我们只需要其中一个操作而已，因此根据这个 内存屏障 的功能划分出了两个内存屏障：读内存屏障 和 写内存屏障
+**Java 中的 volatile 就是通过添加内存屏障来帮助实现可见性**
 
-- 写内存屏障（ **StoreStore** ）：在执行下一条指令之前，将 Store Buffers 中的数据刷新回 cache，保证前面执行的写逻辑对于其他的 CPU 核心可见
-
-- 读内存屏障（ **LoadLoad** ）：在执行下一条指令之前，将 Invalidate Queues 中的失效消息全部处理，保证其他 CPU 核心执行的写操作对于当前 CPU 核心可见
-
-
-
-我们可以看出，**实际上 Java 中的 volatile 就是根据这个 读内存屏障 和 写内存屏障 来保证可见性的**
-
-
-
-### 6.6、总结
-
-1、CPU 和 cache：由于 CPU 和 内存之间访问速度差异太大，为了提高 CPU 的效率，所以在 CPU 和 内存之间引入了 cache，一个 CPU 有多个 核心，每个 CPU 核心都有自己的 L1 cache 和 L2 cache，CPU 核心操作的数据都是内存的数据副本，当修改完后需要写回内存，但是如果每次写操作都直接写回内存的话，那么 CPU 效率太低了，前面也说了 CPU 和 内存速度差异大才引入 cache 的，所以 CPU 使用了 回写 的方式
-
-2、回写：CPU 操作的基本数据单位是 cache line，当对某个 cache line 的数据进行修改时，会将该 cache line 中的 dirty bit 设置为 1，表示脏数据，跟内存数据不一致。**但是这样又出现了新的问题：**由于是多核 CPU，一个 cache line 可能由多个 CPU 核心持有，如果 CPU A 修改了 变量 i，而没有通知 CPU B 已经修改了的话，那么 CPU B 并不知道 i 已经被修改了，仍然 使用的是自己 cache 中的旧数据，这就导致了数据不可见，即 CPU A 的写操作 对 CPU B 不可见，因此出现了 总线嗅探
-
-3、总线嗅探：CPU 核心会把自己修改的数据发送到 总线上，而所有的 CPU 都会监听总线上的消息，如果 CPU A 修改了 i，CPU B 监听到这个消息，如果发现自己 cache 有 i，那么就会将 更新的 i 数据更新到自己的 cache 中。**但是这样就又有了一个新的问题**：CPU 的修改的所有数据都会发送到总线上，其中有的数据可能只有自己持有，而所有的 CPU 会监听这条数据，但实际上这条数据对于其他 CPU 来说没有任何意义，这显然是 浪费 CPU 资源 和 增加总量的负载，因此出现了 CPU 缓存一致性协议 MESI
-
-4、CPU 缓存一致性协议 MESI：MESI 是基于总线嗅探的协议，它给 cache line 定义了四种状态：已修改、独占、共享、无效，当 CPU A 和 CPU B 的 cache line 中都有变量 i 的时候，它们会把 cache line 设置为 共享 状态，当 CPU A 修改了 i 变量时，会给总线发布 无效消息，CPU B 监听到该消息后，会将 cache line 设置为无效状态，然后 CPU A 会将 cache line 设置为 已修改，再将 dirty bit 置为 1。**在 cache line 为 已修改 和 独占 状态下修改数据不会往总线上发布消息，有效降低了总线的负载。**
-
-5、本来没有什么问题的，**但是存在这么个问题：**当 CPU A 持有相当一部分 【共享】状态的数据时，那么 CPU A 修改数据会频繁发送 失效消息，并且还需要 等待 其他 CPU 处理完 失效消息再接收它们 返回的 ACK ，这段时间 CPU 不能干其他事，这显然对 CPU 来说是不友好的，因此引入了 Store Buffers
-
-6、Store Buffers：CPU A 修改完数据后不会直接写入 cache，而是会先存储到 Store Buffers 中，在后面再一起刷回 cache 中，**但是这样又出现了个问题了**：如果是这么做的话，只能对 单核 CPU 来说是数据可见的，但是对于其他的 CPU 来说，由于 CPU A 修改的数据存储在 Store Buffers 中，没有通知其他 CPU 数据失效了，所以对于 其他 CPU 核心来说，它们使用的仍然是旧数据，因此 多核 CPU 又出现了 数据可见性问题，因此引入了内存屏障
-
-7、内存屏障：在内存屏障的下一条指令执行前，需要将 Store Buffers 中的数据都 刷回 cache。**但是这样又出现了问题：**执行内存屏障的时候会有多个数据刷回 cache，从而发布失效消息，这样就会导致 CPU A 进入等待状态，效率又降低了，又回到了最初的问题。因此出现了 无效队列。
-
-8、无效队列：每个 CPU 核心都维护一个 无效队列，用来存储无效消息，当它们收到无效消息的时候，不会立马去处理，将 cache line 设置无效状态，而是会将 无效消息放入到 无效队列中，然后立马返回一个 ACK，这样 CPU A 等待的时间就缩短了，而 无效队列 中的无效消息会在后面进行处理。**但是这样就又出现了一个问题：**CPU A 修改了 i，将它写回 cache，但是 CPU B 将无效消息放入了无效队列中，这样 CPU B 在读取 i 的时候，仍然是使用的旧值，导致数据不可见。因此需要再使用内存屏障。
-
-9、由于内存屏障有两个语义，有时候往往只需要一个语义，因此将内存屏障按照功能划分出了新的两个内存屏障：写内存屏障 和 读内存屏障
-
-
-
-上面我们可以看出：
-
-单纯的 MESI 协议 已经保证了 多核 CPU 的数据可见性 了，但是 **为了避免 CPU 因为等待 其他 CPU 核心处理无效消息成功后返回的 ACK 而降低了 CPU 效率的问题**  增加了 Store Buffers ；但是又重新出现了 多核 CPU 的可见性问题，因此出现了内存屏障，用来解决 Store Buffers 出现的 多核 CPU 缓存可见性问题；但是最终 CPU 还是会等待 其他 CPU 核心处理完 无效消息 的过程，同时由于 Store Buffers 会堆积修改的数据，因此当 CPU 将数据刷新回缓存时，需要等待更多的无效 ACK，因此出现了 无效队列，其他 CPU 核心收到无效消息后先不处理，尽快返回 ACK，减少 CPU 等待的时间
-
-这也就是在 Java 中，多线程情况下数据不可见就是因为既存在 Store Buffers 但 又没有添加内存屏障
-
-**因此多线程环境下，添加 volatile 是通过添加内存屏障来保证内存可见性**
-
-但是 volatile 并不能保证原子性，因为 volatile 修饰的变量在同一时间可以被多个 CPU 核心锁持有
+（在以前没有 MESI 的时候 voldatile 是在总线上加锁，CPU A 操作的时候不允许其他 CPU 核心读取该变量）
