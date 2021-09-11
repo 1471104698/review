@@ -328,7 +328,7 @@ traceroute 探测路由路径原理：
 
 ```
 利用 IP 的 TTL 字段 + UDP + ICMP 超时报文
-Linux 发送的是 UDP 报文，Windows 发送的是 ICMP 报文，两者路由器返回的都是 ICMP 超时报文
+Linux 发送的是 UDP 报文，Windows 是利用 ping，即 ICMP 报文，但两者路由器返回的都是 ICMP 超时报文
 
 步骤：
 最开始将 IP 报文的 TTL = 1，那么第一个路由器 发现 TTL = 1，那么路由器不会继续转发该报文，它会返回一个 ICMP 超时报文，该报文记录了路由器的 IP 地址，然后 traceroute 将 TTL + 1，继续发送，到达第一个路由器，TTL-1，然后转发，到达第二个路由器发现 TTL = 1，返回一个 ICMP 差错超时报文，以此类推直到最终到达目的主机，traceroute 利用该方法获取整个链路上的路由器 IP 地址
@@ -341,34 +341,43 @@ Linux 发送的 UDP 报文中指定的是一个 port > 30000 的端口，该端�
 
 
 
-以下是对 www.zhihu.com 访问的全链路追踪例子：
+以下是对 www.baidu.com 访问的全链路追踪例子：
 
 ```
-C:\Users\milkouyang>tracert www.zhihu.com
-通过最多 30 个跃点跟踪
-到 1595096.sched.d0-dk.tdnsv5.com [183.2.192.233] 的路由:
+C:\Users\ouyang>tracert www.baidu.com
 
-  1     3 ms     1 ms     2 ms  10.16.88.2
-  2     1 ms     1 ms     1 ms  10.16.20.65
-  3     1 ms    54 ms    47 ms  10.0.60.77
-  4     1 ms     1 ms     1 ms  10.6.1.1
-  5     1 ms     1 ms     1 ms  10.6.3.41
-  6     3 ms     2 ms     1 ms  10.6.3.50
-  7     1 ms     1 ms     1 ms  10.6.1.188
-  8     2 ms     1 ms     1 ms  59.37.125.2
-  9     3 ms     3 ms     3 ms  10.196.29.129
- 10     *        *        *     请求超时。
- 11     5 ms     5 ms     5 ms  14.17.60.137
- 12     5 ms     5 ms     4 ms  119.147.221.233
- 13    10 ms     7 ms     7 ms  46.107.36.59.broad.dg.gd.dynamic.163data.com.cn [59.36.107.46]
- 14     8 ms     7 ms     7 ms  183.6.229.242
- 15    15 ms     8 ms     7 ms  183.6.237.118
- 16     8 ms     8 ms     6 ms  183.2.192.233
+通过最多 30 个跃点跟踪
+到 www.a.shifen.com [183.232.231.174] 的路由:
+
+  1     6 ms     5 ms     4 ms  192.168.43.1
+  2     *        *        *     请求超时。
+  3     *        *        *     请求超时。
+  4    47 ms    29 ms    49 ms  192.168.50.2
+  5    32 ms    61 ms    50 ms  211.139.131.53
+  6    47 ms    31 ms    32 ms  183.235.229.117
+  7     *        *        *     请求超时。
+  8    46 ms    72 ms    67 ms  120.241.48.186
+  9     *        *        *     请求超时。
+ 10    46 ms    49 ms    65 ms  183.232.231.174
 
 跟踪完成。
 ```
 
+利用 wireshark 进行抓包：
 
+![image.png](https://pic.leetcode-cn.com/1631333398-RoZpNz-image.png)
+
+这里是 windows 的，tracert 底层使用的是 ping 命令，可以看出 TTL 由 1 开始慢慢增加
+
+而对于主机发出的 ICMP 包，返回的是图中黑色标注的包，是一个 ICMP 差错报文，内容如下：
+
+![image.png](https://pic.leetcode-cn.com/1631334002-oyTDAZ-image.png)
+
+它的 type = 11, code = 0，表示超时，即由于 TTL = 1 还没有到达主机，所以由对应的路由器返回该报文，由此 traceroute 就可以判定 TTL 不够，因此下一次请求会将 TTL + 1
+
+当到达目的主机时，目的主机接收到 ping 回显请求报文，那么它会回送一个 ICMP 回显响应报文，由此 tracert 收到后就知道到达目的主机，停止发送
+
+![image.png](https://pic.leetcode-cn.com/1631334317-bAQFvr-image.png)
 
 
 
@@ -377,9 +386,12 @@ C:\Users\milkouyang>tracert www.zhihu.com
 问题：
 
 ```
-TCP 如何处理重复的报文数据？
+TCP 本身能够理解处理传输的字节流数据吗？
+TCP 如何处理收到的重复报文数据？
 TCP 如何避免主动关闭方一直处于 FIN_WAIT2 状态？
+什么是半关闭和半打开？
 如何避免半打开的 TCP 连接占用服务器资源？
+如何得到主机A和主机B的路由链并定位出现问题的路由器IP？
 ```
 
 
