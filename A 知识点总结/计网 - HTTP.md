@@ -268,7 +268,9 @@ consequence
 
 
 
-## 5、HTTP 浏览器缓存策略
+## 5、HTTP 缓存
+
+### 1、cache-control
 
 HTTP 1.0 使用 Expires 来控制缓存，HTTP 1.1 使用 cache-control 用来控制浏览器是否进行缓存以及对应的缓存策略
 
@@ -279,15 +281,27 @@ cache-control 存在以下几种取值：
 
 - no-cache：进行缓存，缓存是否使用需要经过 `对比缓存` 来判断
 - no-store：不进行缓存
-- max-age=xxxx：指定缓存有效时间，以 s 为单位
+- max-age=600：指定缓存有效时间，以 s 为单位，这里是 600s 后过期
 
 
+
+### 2、Expires 和 max-age
+
+当同时存在 Expires 和 max-age 时，**max-age 优先于 max-age**
+
+max-age 存储的是一个相对的时间，比如 `cache-control：max-age=600`，它的过期时间是通过响应头字段 Date 来进行计算的
+
+Expires 存储的是一个绝对时间，比如 `expires：Thu, 08 Sep 2022 19:03:54 GMT`
+
+
+
+### 3、缓存类型
 
 缓存分为两种类型：强制缓存和协商缓存
 
 
 
-> ####  1、强制缓存
+####  1、强制缓存
 
 - 如果浏览器有缓存
   - 缓存没有过期，那么直接使用该缓存
@@ -301,7 +315,7 @@ cache-control 存在以下几种取值：
 
 
 
-> #### 2、协商缓存
+#### 2、协商缓存
 
 协商缓存就是无论缓存是否过期都会去咨询服务器
 
@@ -316,7 +330,7 @@ cache-control 存在以下几种取值：
 
 
 
-> #### cache-control 取值选择
+### 4、使用缓存时选择 cache-control 取值
 
 资源是否需要缓存
 
@@ -331,7 +345,7 @@ cache-control 存在以下几种取值：
 
 
 
-> #### 缓存标识
+### 5、缓存标识
 
 [图解 no-cache 等，顺带有 etag 等的用法](https://zhuanlan.zhihu.com/p/55623075)
 
@@ -379,3 +393,62 @@ etag 和 last-modified 同时存在时的优先级？
 如果 etag 不存在，那么再判断 last-modified
 ```
 
+
+
+### 6、缓存强制过期校验 must-revalidate   
+
+[Cache-Control: must-revalidate](https://zhuanlan.zhihu.com/p/60357719)
+
+
+
+cache-control 取值还存在另外一个值：must-revalidate 
+
+must-revalidate 字面意思是强制校验
+
+有以下 cache-control 取值：
+
+```
+Cache-Control: max-age=86400, must-revalidate   
+```
+
+写这条缓存的人想表达的意思是：在 86400（1天）内无论缓存是否过期都必须想服务器发起请求校验资源是否发生修改
+
+但是实际上这条配置并不会跟它表达的意思一样，它在缓存失效前都是直接从本地读取，并不会进行校验
+
+这是因为 **must-revalidate 生效有个前提：缓存必须已经过期了。**
+
+这就有疑问了，根据一般的想法，缓存过期了浏览器不都会自动去询问服务器的么，这个配置还有什么作用？那是因为 HTTP 规范允许客户端在一些特殊情况下使用过期缓存而不向服务器询问，而这个配置就是用来解决这个问题的，强制要求客户端不使用过期缓存，缓存过期了必须向服务器进行询问资源是否更新。
+
+
+
+实际上配置的人想用的是 no-cache 。
+
+
+
+那 must-revalidate  一定能强制浏览器不使用过期吗？
+
+```
+并不是，因为浏览器的页面回退前进功能，它会默认使用缓存的数据，即使缓存过期了也不会进行校验，使用 no-cache 和 must-revalidate 都不能使浏览器在该情况下不使用过期缓存，除非使用 no-store，这种情况下浏览器本地都没有缓存
+```
+
+
+
+### 7、启发式缓存
+
+想让浏览器进行缓存，有三种方式：
+
+- HTTP 1.1 的 cache-control：max-age
+- HTTP 1.0 的 expires
+- last-modified
+
+max-age 优先级高于 expires，那第三种呢？
+
+```
+HTTP/2 200
+Date: Wed, 27 Mar 2019 22:00:00 GMT
+Last-Modified: Wed, 27 Mar 2019 12:00:00 GMT
+```
+
+假设存在上面的完整的响应头信息，没有 cache-control，也没有 expires，但它实际上也可以使用缓存，在 chrome 浏览器中添加了这么一个功能：使用 `(Date - Last-Modified0) / 10` 就是缓存的过期时间
+
+如果想禁用这个启发式缓存，那么添加 cache-control：no-cache 或者 cache-control：must-revalidate
