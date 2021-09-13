@@ -449,6 +449,6 @@ Date: Wed, 27 Mar 2019 22:00:00 GMT
 Last-Modified: Wed, 27 Mar 2019 12:00:00 GMT
 ```
 
-假设存在上面的完整的响应头信息，没有 cache-control，也没有 expires，但它实际上也可以使用缓存，在 chrome 浏览器中添加了这么一个功能：使用 `(Date - Last-Modified0) / 10` 就是缓存的过期时间
+假设存在上面的完整的响应头信息，没有 cache-control，也没有 expires，但它实际上也可以使用缓存，在 chrome 浏览器中添加了这么一个功能：使用 `(Date - Last-Modified0) / 10` 就是缓存的过期时间，即当前时间到资源的最后一次修改时间的十分之一
 
 如果想禁用这个启发式缓存，那么添加 cache-control：no-cache 或者 cache-control：must-revalidate
